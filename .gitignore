@@ -1,0 +1,23 @@
+.env
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+.vscode/
+.idea/
+.DS_Store
+*.user
+*.suo
+*.tsbuildinfo
+coverage/
+.env.*
+# Local configuration and secrets
+**/appsettings.Development.json
+**/appsettings.Local.json
+**/appsettings.*.local.json
+
+# Logs and database backups
+*.log
+*.dump
+*.backup
+*.bak

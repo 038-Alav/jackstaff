@@ -1,0 +1,8 @@
+{
+  "sdk": {
+    "version": "10.0.100",
+    "rollForward": "latestFeature",
+    "allowPrerelease": false,
+    "errorMessage": "JACKSTAFF v0.1 requiere .NET SDK 10.0.100 o superior. Instala el SDK x64 (no solo Runtime): winget install Microsoft.DotNet.SDK.10. Descarga: https://dotnet.microsoft.com/en-us/download/dotnet/10.0"
+  }
+}
