@@ -48,7 +48,8 @@ function Get-JackstaffAppDbPassword {
         $connectionString = [string]$settings.Database.ConnectionString
 
         $builder = New-Object System.Data.Common.DbConnectionStringBuilder
-        $builder.ConnectionString = $connectionString
+        $property = $builder.GetType().GetProperty("ConnectionString")
+        $property.SetValue($builder, $connectionString)
 
         $passwordKey = @($builder.Keys | Where-Object {
             $_.ToString() -in @('Password', 'Pwd')
