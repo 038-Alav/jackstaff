@@ -64,7 +64,8 @@ builder.Services.AddAuthorization(options =>
     foreach (var permission in new[]
     {
         "dashboard.read", "sites.read", "sites.write", "radios.read", "radios.write",
-        "groups.read", "groups.write", "tickets.read", "tickets.write", "tickets.manage"
+        "groups.read", "groups.write", "tickets.read", "tickets.write", "tickets.manage",
+        "platform.tickets.read", "platform.tickets.manage"
     })
     {
         options.AddPolicy(permission, policy => policy.RequireClaim("permission", permission));
@@ -94,6 +95,7 @@ app.MapAuthEndpoints();
 app.MapDashboardEndpoints();
 app.MapInventoryEndpoints();
 app.MapTicketEndpoints();
+app.MapSupportTicketEndpoints();
 
 app.Run();
 

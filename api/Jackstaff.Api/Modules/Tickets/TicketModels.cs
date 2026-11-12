@@ -6,7 +6,7 @@ public sealed record ChangeTicketStatusRequest(string Status, string? Note);
 public sealed record TicketDto(Guid Id, string TicketNumber, string Title, string Description, string Type,
     string Priority, string Status, Guid? RadioId, string? RadioAlias, Guid? SiteId, string? SiteName,
     Guid? RequestedGroupId, string? RequestedGroupName, DateTime CreatedAt, DateTime UpdatedAt,
-    string CreatedByName);
+    string CreatedByName, Guid TenantId, string TenantName, string TenantSlug);
 
 public sealed record TicketState(Guid Id, string TicketNumber, string Type, string Status, Guid? RadioId, Guid? RequestedGroupId);
 

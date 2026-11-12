@@ -10,6 +10,36 @@ public sealed class TokenService(IConfiguration configuration)
 {
     public TokenEnvelope Create(AuthUser user, TenantMembership tenant)
     {
+        var claims = new List<Claim>
+        {
+            new("sub", user.Id.ToString()),
+            new("name", user.Name),
+            new("email", user.Email),
+            new("workspace_type", "tenant"),
+            new("tenant_id", tenant.TenantId.ToString()),
+            new("tenant_slug", tenant.Slug),
+            new("role", tenant.Role)
+        };
+        claims.AddRange(tenant.Permissions.Cast<string>().Select(permission => new Claim("permission", permission)));
+        return Issue(claims);
+    }
+
+    public TokenEnvelope CreatePlatform(AuthUser user, PlatformMembership membership)
+    {
+        var claims = new List<Claim>
+        {
+            new("sub", user.Id.ToString()),
+            new("name", user.Name),
+            new("email", user.Email),
+            new("workspace_type", "platform_staff"),
+            new("role", membership.Role)
+        };
+        claims.AddRange(membership.Permissions.Cast<string>().Select(permission => new Claim("permission", permission)));
+        return Issue(claims);
+    }
+
+    private TokenEnvelope Issue(IEnumerable<Claim> claims)
+    {
         var issuer = configuration["Jwt:Issuer"] ?? "Jackstaff";
         var audience = configuration["Jwt:Audience"] ?? "Jackstaff.Web";
         var key = configuration["Jwt:SigningKey"]
@@ -18,21 +48,6 @@ public sealed class TokenService(IConfiguration configuration)
             ? Math.Clamp(configuredMinutes, 5, 1440)
             : 240;
         var expires = DateTime.UtcNow.AddMinutes(minutes);
-
-        var claims = new List<Claim>
-        {
-            new("sub", user.Id.ToString()),
-            new("name", user.Name),
-            new("email", user.Email),
-            new("tenant_id", tenant.TenantId.ToString()),
-            new("tenant_slug", tenant.Slug),
-            new("role", tenant.Role)
-        };
-        claims.AddRange(
-            tenant.Permissions
-                .Cast<string>()
-                .Select(permission => new Claim("permission", permission))
-        );
 
         var credentials = new SigningCredentials(
             new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key)), SecurityAlgorithms.HmacSha256);

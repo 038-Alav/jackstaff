@@ -89,6 +89,28 @@ try {
         }
     }
 
+    # Apply incremental SQL migrations after the initial schema. This keeps existing demo
+    # databases upgradeable without requiring a destructive reset.
+    $migrationsDirectory = Join-Path $root 'db\migrations'
+    if (Test-Path $migrationsDirectory) {
+        foreach ($migrationFile in (Get-ChildItem -Path $migrationsDirectory -Filter '*.sql' -File | Sort-Object Name)) {
+            $migrationVersion = [System.IO.Path]::GetFileNameWithoutExtension($migrationFile.Name)
+            $escapedMigrationVersion = $migrationVersion.Replace("'", "''")
+            $migrationApplied = Invoke-JackstaffPsql -DatabaseName $Database -Sql "SELECT CASE WHEN EXISTS (SELECT 1 FROM schema_migrations WHERE version = '$escapedMigrationVersion') THEN 'true' ELSE 'false' END;"
+
+            if ($migrationApplied -eq 'true') {
+                Write-Host "Migración $migrationVersion ya aplicada." -ForegroundColor DarkGray
+                continue
+            }
+
+            Write-Host "Aplicando migración $migrationVersion..." -ForegroundColor Cyan
+            & $psql -X -v ON_ERROR_STOP=1 -h $HostName -p $Port -U $AdminUser -d $Database -f $migrationFile.FullName
+            if ($LASTEXITCODE -ne 0) {
+                throw "No se pudo aplicar la migración '$migrationVersion'. Revisa el error de PostgreSQL mostrado arriba."
+            }
+        }
+    }
+
     # El rol de aplicación es exclusivo de esta demo local y usa la clave definida en appsettings.json.
     $appDbPassword = Get-JackstaffAppDbPassword
     $escapedAppDbPassword = $appDbPassword.Replace("'", "''")

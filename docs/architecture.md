@@ -10,7 +10,7 @@ Customer-specific terminology is configuration/data, not a new branch in the pro
 
 The API is one deployable ASP.NET Core application. Modules own their HTTP routes, request/response models and business workflows:
 
-- `Auth`: users, memberships, roles, permissions, token issuance and tenant switching.
+- `Auth`: users, tenant memberships, platform memberships, roles, permissions, token issuance and tenant switching.
 - `Dashboard`: tenant-scoped operational read models.
 - `Inventory`: sites, radio models, radios, groups and effective assignments.
 - `Tickets`: service desk, state transition rules and group-change orchestration.
@@ -22,17 +22,27 @@ Shared infrastructure must not become a generic dumping ground for domain behavi
 
 The active tenant comes from a signed JWT claim, not from a client-provided `tenant_id` field or arbitrary header. Tenant switching performs a membership lookup before issuing a replacement token.
 
-For an authenticated request:
+There are two authenticated workspace types, both represented by signed JWTs:
+
+**Customer tenant**
 
 1. JWT validation verifies signature, issuer, audience and expiry.
 2. `TenantSessionMiddleware` reads `tenant_id` and `sub` from the validated principal.
 3. `TenantDbSession` opens one Npgsql connection and transaction for the request.
-4. It sets `app.tenant_id` with PostgreSQL `set_config(..., true)`, which is transaction-local.
-5. The middleware revalidates that the user and tenant are active and that the membership still exists.
-6. Every module query uses that same connection/transaction and also has an explicit `tenant_id` predicate.
-7. PostgreSQL RLS independently enforces `tenant_id = current_setting('app.tenant_id')` on operational tables.
+4. It sets `app.tenant_id` and `app.is_platform_staff = false` with transaction-local `set_config(..., true)`.
+5. The middleware revalidates that the user and tenant are active and that the tenant membership still exists.
+6. Tenant module queries use that same connection/transaction and retain explicit `tenant_id` predicates.
+7. PostgreSQL RLS enforces the active tenant context on operational tables.
 
-The application database role is a separate `NOSUPERUSER NOBYPASSRLS` role and is not the owner of operational tables. RLS is both enabled and forced. Global identity catalogue tables (`users`, `tenants`, `roles`, `permissions`, `tenant_memberships`) are not tenant-scoped; membership queries are constrained to the user ID from the signed token.
+**Platform staff**
+
+1. A platform staff account has a row in `platform_memberships`; it is not inserted into every customer tenant and is not a synthetic tenant.
+2. Its signed token carries `workspace_type = platform_staff` and platform permissions, but no `tenant_id` claim.
+3. `TenantSessionMiddleware` revalidates the platform membership and opens the request transaction with `app.is_platform_staff = true`.
+4. Additional RLS policies allow platform staff to read operational records across tenants and write only the workflow records needed by the support module. Platform-specific API routes also require platform-specific permissions.
+5. Support ticket lookups resolve the ticket's own `tenant_id` from the database. Comments, history and audit events retain that tenant ID even when the actor is platform staff.
+
+The application database role is a separate `NOSUPERUSER NOBYPASSRLS` role and is not the owner of operational tables. RLS is both enabled and forced. Global identity catalogue tables (`users`, `tenants`, `roles`, `permissions`, `tenant_memberships`, `platform_memberships`) are not tenant-scoped; membership queries are constrained to the user ID from the signed token. Platform access is expressed through narrowly scoped policies and API permissions, not a PostgreSQL superuser or `BYPASSRLS` account.
 
 ## Domain distinctions
 
@@ -44,7 +54,7 @@ The application database role is a separate `NOSUPERUSER NOBYPASSRLS` role and i
 
 ## Transaction boundaries
 
-The current v0.1 service runs each authenticated request in one tenant-scoped DB transaction. Group-change resolution atomically:
+The v0.1 service runs each authenticated request in one request-scoped DB transaction, with a tenant or platform access context. Group-change resolution atomically:
 
 - closes the active assignment,
 - inserts the new assignment,
@@ -94,6 +104,6 @@ These interfaces are a direction, not implemented integrations. Provider credent
 - GPS/indoor positioning ingestion and live maps.
 - Talkgroups/channels, dispatch, PTT, recordings and messaging.
 - Tenant billing, plans, subscription entitlements, white-label branding.
-- Platform-operator console and enterprise dedicated database deployment.
+- Full platform administration, customer impersonation and enterprise dedicated database deployment. The v0.1 platform workspace is limited to the transversal ticket inbox and ticket workflow.
 - Production identity hardening (HttpOnly cookies, MFA, account recovery, rate limits).
 - Background workers and message broker. Add only after measured operational needs justify them.

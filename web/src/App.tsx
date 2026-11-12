@@ -36,7 +36,7 @@ export default function App() {
     if (!token) return;
     let active = true;
     api<AuthSession>('/auth/me').then((result) => {
-      if (active) { setToken(result.accessToken); setSession(result); }
+      if (active) { setToken(result.accessToken); setSession(result); setPage(result.workspaceType === 'platform_staff' ? 'tickets' : 'dashboard'); }
     }).catch(() => { if (active) { clearToken(); setSession(null); } })
       .finally(() => { if (active) setRestoring(false); });
     return () => { active = false; };
@@ -61,12 +61,12 @@ export default function App() {
   }, []);
 
   async function switchTenant(slug: string) {
-    if (!session || slug === session.activeTenant.slug) { setTenantMenuOpen(false); return; }
+    if (!session || !session.activeTenant || session.workspaceType !== 'tenant' || slug === session.activeTenant.slug) { setTenantMenuOpen(false); return; }
     setSwitching(true); setTenantMenuOpen(false);
     try {
       const next = await apiPost<AuthSession>('/auth/switch-tenant', { tenantSlug: slug });
       setToken(next.accessToken); setSession(next); setPage('dashboard');
-      setToast(`Espacio de trabajo cambiado a ${next.activeTenant.name}.`);
+      setToast(`Espacio de trabajo cambiado a ${next.activeTenant?.name ?? 'la organización seleccionada'}.`);
     } catch (error) { setToast(error instanceof Error ? error.message : 'No fue posible cambiar de organización.'); }
     finally { setSwitching(false); }
   }
@@ -74,26 +74,37 @@ export default function App() {
   function logout() { clearToken(); setSession(null); setPage('dashboard'); }
 
   if (restoring) return <div className="app-loading"><span className="loader-mark"><Anchor size={22} /></span><span>Preparando JACKSTAFF…</span></div>;
-  if (!session) return <LoginPage onAuthenticated={setSession} />;
+  if (!session) return <LoginPage onAuthenticated={(next) => {
+    setSession(next);
+    setPage(next.workspaceType === 'platform_staff' ? 'tickets' : 'dashboard');
+  }} />;
 
-  const current = navigation.find((item) => item.id === page)!;
-  const canManage = ['tenant_admin', 'support'].includes(session.activeTenant.role);
-  const groups = [...new Set(navigation.map((item) => item.group))];
+  const isPlatformStaff = session.workspaceType === 'platform_staff';
+  const visibleNavigation = isPlatformStaff ? navigation.filter((item) => item.id === 'tickets') : navigation;
+  const current = visibleNavigation.find((item) => item.id === page) ?? visibleNavigation[0];
+  const canManage = isPlatformStaff || ['tenant_admin', 'support'].includes(session.activeTenant?.role ?? '');
+  const groups = [...new Set(visibleNavigation.map((item) => item.group))];
+  const workspaceName = session.activeTenant?.name ?? 'Soporte JACKSTAFF';
 
   return <div className="app-shell">
     <aside className="sidebar">
       <div className="sidebar-brand"><span className="brand-mark"><Anchor size={20} /></span><div><b>JACKSTAFF</b><small>FLEET OPERATIONS</small></div></div>
       <div className="workspace-selector-wrap">
         <span className="sidebar-label">WORKSPACE</span>
-        <button className="workspace-selector" onClick={() => setTenantMenuOpen(!tenantMenuOpen)} disabled={switching}>
-          <span className="tenant-avatar">{session.activeTenant.name.slice(0, 1).toUpperCase()}</span>
-          <span className="tenant-selector-text"><b>{session.activeTenant.name}</b><small>{session.activeTenant.role.replace('_', ' ')}</small></span>
-          <ChevronDown size={15} className={tenantMenuOpen ? 'rotate-chevron' : ''} />
-        </button>
-        {tenantMenuOpen && <div className="tenant-menu">{session.tenants.map((tenant) => <button key={tenant.id} className={tenant.slug === session.activeTenant.slug ? 'tenant-option selected' : 'tenant-option'} onClick={() => void switchTenant(tenant.slug)}><span className="tenant-avatar small">{tenant.name.slice(0, 1).toUpperCase()}</span><span><b>{tenant.name}</b><small>{tenant.role.replace('_', ' ')}</small></span>{tenant.slug === session.activeTenant.slug && <ShieldCheck size={15} />}</button>)}</div>}
+        {isPlatformStaff ? <div className="workspace-selector">
+          <span className="tenant-avatar">S</span>
+          <span className="tenant-selector-text"><b>Soporte JACKSTAFF</b><small>platform support</small></span>
+        </div> : <>
+          <button className="workspace-selector" onClick={() => setTenantMenuOpen(!tenantMenuOpen)} disabled={switching}>
+            <span className="tenant-avatar">{workspaceName.slice(0, 1).toUpperCase()}</span>
+            <span className="tenant-selector-text"><b>{workspaceName}</b><small>{session.activeTenant?.role.replace('_', ' ')}</small></span>
+            <ChevronDown size={15} className={tenantMenuOpen ? 'rotate-chevron' : ''} />
+          </button>
+          {tenantMenuOpen && <div className="tenant-menu">{session.tenants.map((tenant) => <button key={tenant.id} className={tenant.slug === session.activeTenant?.slug ? 'tenant-option selected' : 'tenant-option'} onClick={() => void switchTenant(tenant.slug)}><span className="tenant-avatar small">{tenant.name.slice(0, 1).toUpperCase()}</span><span><b>{tenant.name}</b><small>{tenant.role.replace('_', ' ')}</small></span>{tenant.slug === session.activeTenant?.slug && <ShieldCheck size={15} />}</button>)}</div>}
+        </>}
       </div>
       <nav className="sidebar-nav" aria-label="Navegación principal">
-        {groups.map((groupName) => <div className="nav-group" key={groupName}><span className="sidebar-label">{groupName}</span>{navigation.filter((item) => item.group === groupName).map((item) => {
+        {groups.map((groupName) => <div className="nav-group" key={groupName}><span className="sidebar-label">{groupName}</span>{visibleNavigation.filter((item) => item.group === groupName).map((item) => {
           const Icon = item.icon;
           return <button key={item.id} className={`nav-item ${page === item.id ? 'active' : ''}`} onClick={() => setPage(item.id)}><Icon size={17} /><span>{item.label}</span>{item.id === 'tickets' && <span className="nav-new-dot" />}</button>;
         })}</div>)}
@@ -106,13 +117,13 @@ export default function App() {
       </div>
     </aside>
     <main className="main-area">
-      <header className="topbar"><div className="topbar-breadcrumb"><span>JACKSTAFF</span><span>/</span><b>{current.label}</b></div><div className="topbar-right"><span className="topbar-context"><Command size={14} /> {session.activeTenant.name}</span><button className="topbar-icon" onClick={() => setToast('No tienes notificaciones pendientes.')} title="Notificaciones"><Bell size={17} /></button><span className="topbar-divider" /><span className="topbar-version">v0.1.0</span></div></header>
-      <div className="main-scroll" key={`${page}-${session.activeTenant.slug}`}>
-        {page === 'dashboard' && <DashboardPage tenantName={session.activeTenant.name} onNavigate={(next) => setPage(next as Page)} />}
+      <header className="topbar"><div className="topbar-breadcrumb"><span>JACKSTAFF</span><span>/</span><b>{current.label}</b></div><div className="topbar-right"><span className="topbar-context"><Command size={14} /> {workspaceName}</span><button className="topbar-icon" onClick={() => setToast('No tienes notificaciones pendientes.')} title="Notificaciones"><Bell size={17} /></button><span className="topbar-divider" /><span className="topbar-version">v0.1.0</span></div></header>
+      <div className="main-scroll" key={`${page}-${session.activeTenant?.slug ?? session.workspaceType}`}>
+        {page === 'dashboard' && session.activeTenant && <DashboardPage tenantName={session.activeTenant.name} onNavigate={(next) => setPage(next as Page)} />}
         {page === 'radios' && <RadiosPage />}
         {page === 'sites' && <SitesPage />}
         {page === 'groups' && <GroupsPage />}
-        {page === 'tickets' && <TicketsPage canManage={canManage} />}
+        {page === 'tickets' && <TicketsPage canManage={canManage} supportMode={isPlatformStaff} />}
       </div>
     </main>
     {toast && <div className="toast-message">{toast}</div>}

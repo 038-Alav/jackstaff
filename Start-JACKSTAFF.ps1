@@ -114,7 +114,7 @@ Write-Host "Node.js $nodeVersionText | npm $npmVersionText | .NET SDK $dotnetVer
 $psql = Get-JackstaffPsqlPath
 $env:PGPASSWORD = Get-JackstaffAppDbPassword
 try {
-    $databaseCheck = & $psql -X -h 127.0.0.1 -p 5432 -U jackstaff_app -d jackstaff -tA -c "SELECT CASE WHEN EXISTS (SELECT 1 FROM schema_migrations WHERE version = '001_initial_v0_1') THEN 'ready' ELSE 'missing' END;" 2>&1
+    $databaseCheck = & $psql -X -h 127.0.0.1 -p 5432 -U jackstaff_app -d jackstaff -tA -c "SELECT CASE WHEN EXISTS (SELECT 1 FROM schema_migrations WHERE version = '001_initial_v0_1') AND EXISTS (SELECT 1 FROM schema_migrations WHERE version = '002_platform_staff_scope') THEN 'ready' ELSE 'missing' END;" 2>&1
     if ($LASTEXITCODE -ne 0 -or (($databaseCheck | Out-String).Trim() -ne 'ready')) {
         throw 'La base de datos JACKSTAFF no está lista.'
     }

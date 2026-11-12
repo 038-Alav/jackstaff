@@ -1,9 +1,11 @@
 export type TenantSummary = { id: string; name: string; slug: string; role: string };
+export type LoginWorkspace = { workspaceType: 'tenant' | 'platform_staff'; name: string; tenantSlug: string | null };
 export type AuthSession = {
   accessToken: string;
   expiresAtUtc: string;
+  workspaceType: 'tenant' | 'platform_staff';
   user: { id: string; email: string; name: string };
-  activeTenant: TenantSummary;
+  activeTenant: TenantSummary | null;
   tenants: TenantSummary[];
 };
 export type DashboardSummary = {
@@ -36,6 +38,7 @@ export type OperationalGroup = {
 export type Ticket = {
   id: string; ticketNumber: string; title: string; description: string; type: string;
   priority: string; status: string; radioId: string | null; radioAlias: string | null;
+  tenantId: string; tenantName: string; tenantSlug: string;
   siteId: string | null; siteName: string | null; requestedGroupId: string | null;
   requestedGroupName: string | null; createdAt: string; updatedAt: string; createdByName: string;
 };

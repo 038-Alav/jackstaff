@@ -1,6 +1,6 @@
 # JACKSTAFF v0.1 — Fleet & Communications Operations Platform
 
-JACKSTAFF es una plataforma modular y multiempresa para administrar activos de comunicación, su organización operativa y las solicitudes asociadas. Metro, seguridad y logística aparecen como organizaciones de demostración independientes; ninguna forma parte de la identidad ni del modelo de dominio del producto.
+JACKSTAFF es una plataforma modular y multiempresa para administrar activos de comunicación, su organización operativa y las solicitudes asociadas. Metro, Empresa X y Empresa Y aparecen como organizaciones de demostración independientes; sus nombres y slugs son datos de la tabla `tenants`, no ramas de código ni identidades globales del producto.
 
 > v0.1 es un primer entregable funcional con inventario y workflow de tickets. Los estados de radio incluidos en la demo son datos ficticios. Esta versión todavía no se conecta a radios, dispatch consoles, GPS ni sistemas de fabricantes.
 
@@ -32,6 +32,7 @@ El script encuentra `psql.exe` en el `PATH` o en la carpeta habitual de PostgreS
 
 - crea la base `jackstaff` si aún no existe;
 - aplica `db/init/001_schema_and_demo.sql` una sola vez;
+- aplica las migraciones pendientes de `db/migrations/` sin borrar los datos existentes;
 - habilita PostGIS y carga las organizaciones y cuentas demo;
 - prepara el rol local `jackstaff_app` que utiliza la API.
 
@@ -94,20 +95,21 @@ El script exige escribir `RESET`, solicita la contraseña de `postgres`, cierra 
 
 Todos los usuarios demo usan la contraseña `JackstaffDemo!2026`.
 
-| Cuenta | Rol | Organización disponible |
+| Cuenta | Rol | Espacio de trabajo |
 |---|---|---|
-| `admin@jackstaff.demo` | Tenant Admin | Metro Demo, Security Demo, Logistics Demo |
-| `ops@jackstaff.demo` | Operator | Metro Demo |
-| `support@jackstaff.demo` | Support | Metro Demo |
+| `admin@jackstaff.demo` | Tenant Admin | Metro, Empresa X y Empresa Y |
+| `ops@jackstaff.demo` | Operator | Metro |
+| `support@jackstaff.demo` | Platform Support | Soporte JACKSTAFF (acceso transversal a tickets) |
 
-La cuenta administradora sirve para comprobar el aislamiento al cambiar de organización. El inventario, grupos, instalaciones y tickets cambian con el tenant activo.
+Todos usan la contraseña demo indicada arriba. La cuenta administradora sirve para comprobar el aislamiento al cambiar de organización. El inventario, grupos, instalaciones y tickets cambian con el tenant activo. La cuenta de soporte no pertenece a ningún tenant: tiene una membresía de plataforma propia y accede a la bandeja transversal de tickets.
 
 ## 4. Alcance funcional de v0.1
 
 | Módulo | Funcionalidad disponible |
 |---|---|
 | Identidad | Login, JWT de acceso, membresías, roles y permisos |
-| Multiempresa | Selector de workspace y autorización de membresía por tenant |
+| Multiempresa | Selector de workspace dinámico y autorización de membresía por tenant |
+| Soporte de plataforma | Login independiente, bandeja transversal de tickets, comentarios e intervención del workflow |
 | Instalaciones | Listado y creación de sitios genéricos por organización |
 | Inventario | Modelos, radios, estado demo, instalación y etiqueta de activo |
 | Grupos operativos | Creación y consulta de grupos |
@@ -155,9 +157,9 @@ La API es un **monolito modular**: módulos separados por capacidad de negocio, 
 - Dapper + Npgsql para SQL explícito y transacciones claras.
 - PostgreSQL 17 con extensión PostGIS habilitada.
 - JWT de acceso y permisos por membresía.
-- Un `TenantDbSession` por petición autenticada.
-- PostgreSQL Row-Level Security en todas las tablas operacionales.
-- Revalidación de cuenta, tenant y membresía en cada petición autenticada.
+- Un `TenantDbSession` por petición autenticada, con contexto tenant o contexto de staff de plataforma.
+- PostgreSQL Row-Level Security en todas las tablas operacionales; el acceso global de plataforma usa políticas explícitas y permisos propios, no `BYPASSRLS`.
+- Revalidación de cuenta y membresía del tipo de workspace en cada petición autenticada.
 - Comentarios, historia de workflow y auditoría append-only para el rol de aplicación.
 
 ### Frontend
@@ -186,6 +188,7 @@ JACKSTAFF-v0.1/
 │   ├── Jackstaff.Api.Tests/      # Workflow tests
 │   └── Jackstaff.sln
 ├── db/init/                      # PostgreSQL/PostGIS, RLS and demo seed
+├── db/migrations/                # Incremental schema/data migrations
 ├── docs/                         # Architecture, security, API and references
 ├── scripts/                      # Setup DB, launch processes, reset and checks
 └── web/                          # React + Vite frontend
@@ -203,7 +206,7 @@ JACKSTAFF-v0.1/
 6. Añade rate limiting, política de bloqueo/recuperación de cuenta, MFA y políticas de expiración/rotación según el riesgo.
 7. Revisa el modelo de permisos, auditoría, retención y requisitos legales con el cliente.
 
-El script `scripts/Setup-Database.ps1` aplica la inicialización solo cuando no existe la migración `001_initial_v0_1`. Para una instalación existente, aplica futuras migraciones SQL versionadas explícitamente con el usuario propietario y registra su versión en `schema_migrations`. No edites una migración ya aplicada.
+El script `scripts/Setup-Database.ps1` aplica la inicialización solo cuando no existe la migración `001_initial_v0_1` y luego aplica, en orden, las migraciones pendientes de `db/migrations/`. No edites una migración ya aplicada; agrega una nueva versión para cada cambio de esquema.
 
 ## 8. Próxima etapa
 

@@ -9,8 +9,10 @@ public sealed class TicketService(TenantDbSession db, AuditWriter audit)
         SELECT t.id, t.ticket_number, t.title, t.description, t.type, t.priority, t.status,
                t.radio_id, r.alias AS radio_alias, t.site_id, s.name AS site_name,
                t.requested_group_id, og.name AS requested_group_name,
-               t.created_at, t.updated_at, u.name AS created_by_name
+               t.created_at, t.updated_at, u.name AS created_by_name,
+               t.tenant_id, tenant.name AS tenant_name, tenant.slug AS tenant_slug
         FROM tickets t
+        JOIN tenants tenant ON tenant.id = t.tenant_id
         LEFT JOIN radios r ON r.tenant_id = t.tenant_id AND r.id = t.radio_id
         LEFT JOIN sites s ON s.tenant_id = t.tenant_id AND s.id = t.site_id
         LEFT JOIN operational_groups og ON og.tenant_id = t.tenant_id AND og.id = t.requested_group_id
@@ -24,6 +26,49 @@ public sealed class TicketService(TenantDbSession db, AuditWriter audit)
             new { TenantId = tenantId }, db.Transaction, cancellationToken: ct));
         return rows.ToArray();
     }
+
+    public async Task<IReadOnlyList<TicketDto>> GetAllForPlatformAsync(CancellationToken ct)
+    {
+        var rows = await db.Connection.QueryAsync<TicketDto>(new CommandDefinition(
+            TicketSelect + " ORDER BY t.created_at DESC;",
+            transaction: db.Transaction, cancellationToken: ct));
+        return rows.ToArray();
+    }
+
+    public async Task<IReadOnlyList<TicketCommentDto>?> GetCommentsForPlatformAsync(
+        Guid ticketId, CancellationToken ct)
+    {
+        var tenantId = await FindTicketTenantAsync(ticketId, ct);
+        return tenantId is null ? null : await GetCommentsAsync(tenantId.Value, ticketId, ct);
+    }
+
+    public async Task<IReadOnlyList<TicketHistoryDto>?> GetHistoryForPlatformAsync(
+        Guid ticketId, CancellationToken ct)
+    {
+        var tenantId = await FindTicketTenantAsync(ticketId, ct);
+        return tenantId is null ? null : await GetHistoryAsync(tenantId.Value, ticketId, ct);
+    }
+
+    public async Task<(TicketCommentDto? Comment, string? Error, bool NotFound)> AddCommentForPlatformAsync(
+        Guid ticketId, Guid userId, string? body, CancellationToken ct)
+    {
+        var tenantId = await FindTicketTenantAsync(ticketId, ct);
+        if (tenantId is null) return (null, null, true);
+        return await AddCommentAsync(tenantId.Value, ticketId, userId, body, ct);
+    }
+
+    public async Task<(TicketDto? Ticket, string? Error, bool NotFound)> ChangeStatusForPlatformAsync(
+        Guid ticketId, Guid userId, string requestedStatus, string? note, CancellationToken ct)
+    {
+        var tenantId = await FindTicketTenantAsync(ticketId, ct);
+        if (tenantId is null) return (null, null, true);
+        return await ChangeStatusAsync(tenantId.Value, ticketId, userId, requestedStatus, note, ct);
+    }
+
+    private Task<Guid?> FindTicketTenantAsync(Guid ticketId, CancellationToken ct) =>
+        db.Connection.QuerySingleOrDefaultAsync<Guid?>(new CommandDefinition(
+            "SELECT tenant_id FROM tickets WHERE id = @TicketId;",
+            new { TicketId = ticketId }, db.Transaction, cancellationToken: ct));
 
     public async Task<IReadOnlyList<TicketCommentDto>?> GetCommentsAsync(
         Guid tenantId, Guid ticketId, CancellationToken ct)
@@ -174,12 +219,18 @@ public sealed class TicketService(TenantDbSession db, AuditWriter audit)
             if (current.RadioId is null || current.RequestedGroupId is null)
                 return (null, "La solicitud de cambio de grupo no tiene radio o grupo de destino.", false);
 
-            // Serialize concurrent group changes for the same radio. The partial unique index
-            // remains the final invariant, while this row lock gives the workflow a stable order.
-            var lockedRadio = await db.Connection.QuerySingleOrDefaultAsync<Guid?>(new CommandDefinition("""
-                SELECT id FROM radios WHERE tenant_id = @TenantId AND id = @RadioId FOR UPDATE;
-                """, new { TenantId = tenantId, RadioId = current.RadioId }, db.Transaction, cancellationToken: ct));
-            if (lockedRadio is null)
+            // Serialize concurrent group changes for the same radio without requiring
+            // platform staff to receive broad UPDATE access to the radios table. The
+            // tenant-scoped partial unique index remains the final database invariant.
+            var radioLockKey = $"{tenantId:N}:{current.RadioId.Value:N}";
+            await db.Connection.ExecuteAsync(new CommandDefinition(
+                "SELECT pg_advisory_xact_lock(hashtextextended(@LockKey, 0));",
+                new { LockKey = radioLockKey }, db.Transaction, cancellationToken: ct));
+
+            var radioExists = await db.Connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+                "SELECT EXISTS(SELECT 1 FROM radios WHERE tenant_id = @TenantId AND id = @RadioId);",
+                new { TenantId = tenantId, RadioId = current.RadioId }, db.Transaction, cancellationToken: ct));
+            if (!radioExists)
                 return (null, "La radio asociada ya no existe en esta organización.", false);
 
             await db.Connection.ExecuteAsync(new CommandDefinition("""

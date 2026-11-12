@@ -13,10 +13,60 @@ public sealed class TenantSessionMiddleware(RequestDelegate next)
             return;
         }
 
-        var tenantClaim = context.User.FindFirstValue("tenant_id");
+        var workspaceType = context.User.FindFirstValue("workspace_type") ?? "tenant";
         var userClaim = context.User.FindFirstValue("sub");
-        if (!Guid.TryParse(tenantClaim, out var tenantId) ||
-            !Guid.TryParse(userClaim, out var userId))
+        if (!Guid.TryParse(userClaim, out var userId))
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return;
+        }
+
+        if (workspaceType == "platform_staff")
+        {
+            // A platform token must never carry a tenant context as well.
+            if (context.User.HasClaim(claim => claim.Type == "tenant_id"))
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return;
+            }
+
+            await session.BeginPlatformAsync(context.RequestAborted);
+            try
+            {
+                var membershipIsActive = await session.Connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM platform_memberships pm
+                        JOIN users u ON u.id = pm.user_id
+                        WHERE pm.user_id = @UserId
+                          AND pm.is_active = TRUE
+                          AND u.is_active = TRUE
+                    );
+                    """,
+                    new { UserId = userId }, session.Transaction,
+                    cancellationToken: context.RequestAborted));
+
+                if (!membershipIsActive)
+                {
+                    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                    await session.RollbackAsync(CancellationToken.None);
+                    return;
+                }
+
+                await next(context);
+                await session.CommitAsync(context.RequestAborted);
+            }
+            catch
+            {
+                await session.RollbackAsync(CancellationToken.None);
+                throw;
+            }
+            return;
+        }
+
+        if (workspaceType != "tenant" ||
+            !Guid.TryParse(context.User.FindFirstValue("tenant_id"), out var tenantId))
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             return;

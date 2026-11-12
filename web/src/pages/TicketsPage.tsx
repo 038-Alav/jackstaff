@@ -14,11 +14,11 @@ const statusActions: Record<string, { status: string; label: string }[]> = {
   in_progress: [{ status: 'resolved', label: 'Resolver' }, { status: 'rejected', label: 'Rechazar' }],
 };
 
-export function TicketsPage({ canManage }: { canManage: boolean }) {
+export function TicketsPage({ canManage, supportMode = false }: { canManage: boolean; supportMode?: boolean }) {
   const [tickets, setTickets] = useState<Ticket[]>([]); const [radios, setRadios] = useState<Radio[]>([]);
   const [sites, setSites] = useState<Site[]>([]); const [groups, setGroups] = useState<OperationalGroup[]>([]);
   const [loading, setLoading] = useState(true); const [error, setError] = useState('');
-  const [search, setSearch] = useState(''); const [filter, setFilter] = useState('active');
+  const [search, setSearch] = useState(''); const [filter, setFilter] = useState(supportMode ? 'all' : 'active');
   const [modal, setModal] = useState(false); const [title, setTitle] = useState('');
   const [description, setDescription] = useState(''); const [type, setType] = useState('incident');
   const [priority, setPriority] = useState('normal'); const [radioId, setRadioId] = useState('');
@@ -30,17 +30,22 @@ export function TicketsPage({ canManage }: { canManage: boolean }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ticketRows, radioRows, siteRows, groupRows] = await Promise.all([
-        api<Ticket[]>('/tickets'), api<Radio[]>('/radios'), api<Site[]>('/sites'), api<OperationalGroup[]>('/groups'),
-      ]);
-      setTickets(ticketRows); setRadios(radioRows); setSites(siteRows); setGroups(groupRows); setError('');
+      if (supportMode) {
+        const ticketRows = await api<Ticket[]>('/support/tickets');
+        setTickets(ticketRows); setRadios([]); setSites([]); setGroups([]); setError('');
+      } else {
+        const [ticketRows, radioRows, siteRows, groupRows] = await Promise.all([
+          api<Ticket[]>('/tickets'), api<Radio[]>('/radios'), api<Site[]>('/sites'), api<OperationalGroup[]>('/groups'),
+        ]);
+        setTickets(ticketRows); setRadios(radioRows); setSites(siteRows); setGroups(groupRows); setError('');
+      }
     } catch (e) { setError(e instanceof Error ? e.message : 'No fue posible cargar tickets.'); }
     finally { setLoading(false); }
-  }, []);
+  }, [supportMode]);
   useEffect(() => { void load(); }, [load]);
 
   const filtered = useMemo(() => tickets.filter((ticket) => {
-    const match = `${ticket.ticketNumber} ${ticket.title} ${ticket.radioAlias ?? ''} ${ticket.siteName ?? ''}`.toLowerCase().includes(search.toLowerCase());
+    const match = `${ticket.ticketNumber} ${ticket.title} ${ticket.tenantName} ${ticket.radioAlias ?? ''} ${ticket.siteName ?? ''}`.toLowerCase().includes(search.toLowerCase());
     const statusMatch = filter === 'all' || (filter === 'active' ? !['resolved', 'rejected'].includes(ticket.status) : ticket.status === filter);
     return match && statusMatch;
   }), [tickets, search, filter]);
@@ -59,7 +64,7 @@ export function TicketsPage({ canManage }: { canManage: boolean }) {
     setCommentTicket(ticket); setCommentDraft(''); setCommentError(''); setCommentsLoading(true);
     try {
       const [commentRows, historyRows] = await Promise.all([
-        api<TicketComment[]>(`/tickets/${ticket.id}/comments`), api<TicketHistory[]>(`/tickets/${ticket.id}/history`),
+        api<TicketComment[]>(`${supportMode ? '/support/tickets' : '/tickets'}/${ticket.id}/comments`), api<TicketHistory[]>(`${supportMode ? '/support/tickets' : '/tickets'}/${ticket.id}/history`),
       ]);
       setComments(commentRows); setHistory(historyRows);
     }
@@ -72,8 +77,8 @@ export function TicketsPage({ canManage }: { canManage: boolean }) {
     if (!commentTicket || !commentDraft.trim()) return;
     setCommentSaving(true); setCommentError('');
     try {
-      await apiPost<TicketComment>(`/tickets/${commentTicket.id}/comments`, { body: commentDraft });
-      setComments(await api<TicketComment[]>(`/tickets/${commentTicket.id}/comments`));
+      await apiPost<TicketComment>(`${supportMode ? '/support/tickets' : '/tickets'}/${commentTicket.id}/comments`, { body: commentDraft });
+      setComments(await api<TicketComment[]>(`${supportMode ? '/support/tickets' : '/tickets'}/${commentTicket.id}/comments`));
       setCommentDraft('');
     } catch (e) { setCommentError(e instanceof Error ? e.message : 'No fue posible publicar el comentario.'); }
     finally { setCommentSaving(false); }
@@ -83,7 +88,7 @@ export function TicketsPage({ canManage }: { canManage: boolean }) {
     const note = nextStatus === 'resolved' && ticket.type === 'group_change'
       ? `Cambio de grupo ejecutado: ${ticket.requestedGroupName}.` : '';
     setWorkingId(ticket.id); setError('');
-    try { await apiPatch(`/tickets/${ticket.id}/status`, { status: nextStatus, note }); await load(); }
+    try { await apiPatch(`${supportMode ? '/support/tickets' : '/tickets'}/${ticket.id}/status`, { status: nextStatus, note }); await load(); }
     catch (e) { setError(e instanceof Error ? e.message : 'No fue posible actualizar el ticket.'); }
     finally { setWorkingId(''); }
   }
@@ -92,16 +97,16 @@ export function TicketsPage({ canManage }: { canManage: boolean }) {
   const criticalCount = tickets.filter((ticket) => ticket.priority === 'critical' && !['resolved', 'rejected'].includes(ticket.status)).length;
 
   return <div className="page-content">
-    <PageHeader eyebrow="SERVICE DESK / REQUEST MANAGEMENT" title="Mesa de ayuda" description="Incidentes, mantenciones y solicitudes de cambios operativos." action={<button className="button button-primary" onClick={() => setModal(true)}><Plus size={16} /> Nueva solicitud</button>} />
+    <PageHeader eyebrow={supportMode ? 'JACKSTAFF / PLATFORM SUPPORT' : 'SERVICE DESK / REQUEST MANAGEMENT'} title={supportMode ? 'Tickets de clientes' : 'Mesa de ayuda'} description={supportMode ? 'Bandeja transversal de solicitudes de las organizaciones atendidas.' : 'Incidentes, mantenciones y solicitudes de cambios operativos.'} action={supportMode ? undefined : <button className="button button-primary" onClick={() => setModal(true)}><Plus size={16} /> Nueva solicitud</button>} />
     {error && <div className="form-error page-error">{error}</div>}
     <div className="ticket-summary"><div><span>Solicitudes activas</span><b>{activeCount}</b></div><div><span>Prioridad crítica</span><b className="summary-red">{criticalCount}</b></div><div><span>Total de tickets</span><b>{tickets.length}</b></div><div className="ticket-workflow-hint"><CircleAlert size={16} /><span>Los cambios de grupo se aplican al inventario solo cuando el ticket queda resuelto.</span></div></div>
     <section className="panel table-panel">
-      <div className="table-toolbar"><div className="table-search"><Search size={16} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar ticket, radio o instalación…" /></div><select className="filter-select" value={filter} onChange={(e) => setFilter(e.target.value)}><option value="active">Solicitudes activas</option><option value="all">Todos los tickets</option><option value="open">Abiertos</option><option value="in_review">En revisión</option><option value="approved">Aprobados</option><option value="in_progress">En ejecución</option><option value="resolved">Resueltos</option><option value="rejected">Rechazados</option></select></div>
+      <div className="table-toolbar"><div className="table-search"><Search size={16} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={supportMode ? "Buscar ticket, organización, radio o instalación…" : "Buscar ticket, radio o instalación…"} /></div><select className="filter-select" value={filter} onChange={(e) => setFilter(e.target.value)}><option value="active">Solicitudes activas</option><option value="all">Todos los tickets</option><option value="open">Abiertos</option><option value="in_review">En revisión</option><option value="approved">Aprobados</option><option value="in_progress">En ejecución</option><option value="resolved">Resueltos</option><option value="rejected">Rechazados</option></select></div>
       {loading ? <div className="loading-panel">Cargando tickets…</div> : <div className="ticket-list">{filtered.map((ticket) => {
         const actions = canManage ? (statusActions[ticket.status] ?? []) : [];
         return <article className="ticket-row" key={ticket.id}>
           <div className="ticket-row-icon"><Headphones size={17} /></div>
-          <div className="ticket-row-main"><div className="ticket-row-meta"><b>{ticket.ticketNumber}</b><span className={`priority-label priority-${ticket.priority}`}>{ticket.priority === 'critical' ? 'Crítica' : ticket.priority === 'high' ? 'Alta' : ticket.priority === 'low' ? 'Baja' : 'Normal'}</span><span>{typeLabels[ticket.type] ?? ticket.type}</span></div>
+          <div className="ticket-row-main"><div className="ticket-row-meta"><b>{ticket.ticketNumber}</b>{supportMode && <span className="ticket-tenant-label">{ticket.tenantName}</span>}<span className={`priority-label priority-${ticket.priority}`}>{ticket.priority === 'critical' ? 'Crítica' : ticket.priority === 'high' ? 'Alta' : ticket.priority === 'low' ? 'Baja' : 'Normal'}</span><span>{typeLabels[ticket.type] ?? ticket.type}</span></div>
             <h3>{ticket.title}</h3><p>{ticket.description || 'Sin descripción adicional.'}</p>
             <div className="ticket-row-context"><span>{ticket.radioAlias ?? 'Sin radio asociada'}</span><i /> <span>{ticket.siteName ?? 'Sin instalación'}</span>{ticket.requestedGroupName && <><i /><span>Destino: {ticket.requestedGroupName}</span></> }</div>
           </div>
@@ -112,7 +117,7 @@ export function TicketsPage({ canManage }: { canManage: boolean }) {
             </div>
           </div>
         </article>;
-      })}{!filtered.length && <div className="empty-state compact"><Headphones size={26} /><b>No hay tickets para mostrar</b><span>Ajusta los filtros o crea una nueva solicitud.</span></div>}</div>}
+      })}{!filtered.length && <div className="empty-state compact"><Headphones size={26} /><b>No hay tickets para mostrar</b><span>{supportMode ? "No hay solicitudes para los filtros seleccionados." : "Ajusta los filtros o crea una nueva solicitud."}</span></div>}</div>}
       <div className="table-footer"><span>Mostrando {filtered.length} de {tickets.length} tickets</span><span>Historial de estados y auditoría habilitados</span></div>
     </section>
 
@@ -126,7 +131,7 @@ export function TicketsPage({ canManage }: { canManage: boolean }) {
         <div className="modal-actions"><button type="button" className="button button-quiet" onClick={() => setModal(false)}>Cancelar</button><button className="button button-primary" disabled={saving}>{saving ? 'Creando…' : 'Crear solicitud'}</button></div>
       </form>
     </Modal>}
-    {commentTicket && <Modal title={commentTicket.ticketNumber} eyebrow="TICKET FOLLOW-UP" onClose={() => setCommentTicket(null)} wide>
+    {commentTicket && <Modal title={commentTicket.ticketNumber} eyebrow={supportMode ? `${commentTicket.tenantName.toUpperCase()} / TICKET FOLLOW-UP` : "TICKET FOLLOW-UP"} onClose={() => setCommentTicket(null)} wide>
       <div className="comment-thread">
         <div className="comment-ticket-context"><b>{commentTicket.title}</b><span>{typeLabels[commentTicket.type] ?? commentTicket.type} · {commentTicket.priority}</span></div>
         {commentsLoading ? <div className="loading-panel">Cargando seguimiento…</div> : <div className="follow-up-columns">
